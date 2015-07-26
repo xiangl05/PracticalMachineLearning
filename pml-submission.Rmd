@@ -1,0 +1,130 @@
+---
+title: "Report for Practical Machine Learning Course Project"
+output: html_document
+---
+
+## Introduction
+
+In this report, we will perform analysis on the Weight Lifting Exercise Dataset <http://groupware.les.inf.puc-rio.br/har#weight_lifting_exercises>. It collects body movement data from 6 participancts exercising in 5 different ways. The goal is to predict the way in which a particular exercise has been performed. 
+
+
+## Data Pre-processing
+
+Firstly, let us read in the data and get a feeling of its structure. The reviewer may want to save and run this file in the same directory as the trainFile.
+
+```{r}
+library(caret)
+trainFile = "pml-training.csv"
+trainData = read.table(trainFile, header=TRUE, sep=",", row.names=1)
+
+dim(trainData)
+summary(trainData)
+```
+
+The initial analysis tells us some information:
+
++ The training set contains 19622 samples, with 158 original features;
+
++ The columns related to timestamp or time window are of less use to our prediction;
+
++ Many features have up to 19216 empty entries or NA's, or even some strange notation "#DIV/0!".
+
+Therefore, we clean the dataset by removing unnecessary information or the ones conveying less useful information, e.g., the values are almost the same, or large amount of the values are NA's.
+
+```{r}
+trainData = trainData[,c(-2:-6)]  # remove timestamp or time window columns
+
+nzvIndex = nearZeroVar(trainData)
+colnames(trainData)[nzvIndex]
+trainData = trainData[,-nzvIndex] # remove the columns giving less information
+
+nrow = dim(trainData)[1]
+ncol = dim(trainData)[2]
+naIndex = integer()
+for (i in 1:ncol) {
+  if (sum(is.na(trainData[,i])) > 0.5*nrow) {
+    naIndex = c(naIndex, i)
+  }
+}
+colnames(trainData)[naIndex]  
+trainData = trainData[,-naIndex] # remove the columns having more than half NA's
+
+dim(trainData)
+```
+
+Now the dataset becomes much more concise. We continue by analyzing the correlations among different features. The visualization of feature correlations are plotted below.
+
+```{r}
+library(corrplot)
+temp = trainData[,c(-1,-dim(trainData)[2])] # remove non-numeric columns
+corMat = cor(temp)
+corrplot(corMat)
+```
+
+Notably, a few features are high correlated with absolute correlation coefficient larger than 0.7. We shall remove these highly correlated features.
+
+```{r}
+corMat = corMat - diag(diag(corMat))
+corMat = abs(corMat)
+# corrplot(corMat)
+corIndex = findCorrelation(corMat, cutoff=0.7)
+colnames(temp)[corIndex]
+temp = temp[,-corIndex]
+trainData = data.frame(trainData[,1], temp, trainData[,dim(trainData)[2]])
+colnames(trainData)[1] = "user_name"
+colnames(trainData)[dim(trainData)[2]] = "classe"
+```
+
+Finally we create dummy variables from the column "user_name".
+
+```{r}
+trainData = data.frame(model.matrix(classe~.-1, data=trainData), trainData$classe)
+colnames(trainData)[dim(trainData)[2]] = "classe"
+# head(trainData)
+dim(trainData)
+```
+Now the dataset becomes much thinner with only 36 features.
+
+## Model Training
+
+Even though we have tried quite a few machine learning models, here we only show the final model using Random Forest method due to space limit. Our results show that Random Forest ("rf") and SVM with Polynomial Kernel both perform very well.
+
+When training the model, we define the pre-processing method as c("center", "scale") so as to normalize the features. We also define cross-validation in the training control function to prevent overfitting on the training set. Actually this setting will partition the training set into training and cross-validation set.
+
+```{r}
+modFitRf = train(classe~., method="rf", preProcess=c("center", "scale"), trControl=trainControl(method="cv"), data=trainData)
+predTrainRf = predict(modFitRf, trainData[,-dim(trainData)[2]])
+confusionMatrix(predTrainRf, trainData$classe)
+```
+
+This model performs very well on the training dataset, just perfectly predicts the results. As we tested but not showed here, SVM with Polynomial Kernel also results very high accuracy. But for models like CART, Naive Bayes, Stochastic Gradient Boosting, and SVM with Linear Kernel. the training performances are not very satisfactory with only 50% to 70% accuracy. So in the following we will use Random Forest for prediction.
+
+## Testing
+
+To perform testing on the test dataset, we first clean the dataset as what we did on the training set. In particular, we follow the procedure that remove the timestamp columns, remove the near-zero-variance columns, remove the columns have too many NA's, as well as the columns with high correlation. 
+```{r}
+testFile = "pml-testing.csv"
+testData = read.table(testFile, header=TRUE, sep=",", row.names=1)
+# pre-processing testData following to same procedure for the trainData
+testData = testData[,c(-2:-6)]
+testData = testData[,-nzvIndex]
+testData = testData[,-naIndex]
+temp = testData[,c(-1,-dim(testData)[2])]
+temp = temp[,-corIndex]
+testData = data.frame(testData[,1], temp, testData[,dim(testData)[2]])
+colnames(testData)[1] = "user_name"
+colnames(testData)[dim(testData)[2]] = "problem_id"
+testData = data.frame(model.matrix(problem_id~.-1, data=testData), testData$problem_id)
+colnames(testData)[dim(testData)[2]] = "problem_id"
+```
+
+Then we perform prediction on the cleaned dataset using Random Forest model as trained just now. The results are as follows.
+```{r}
+predRf = predict(modFitRf, testData)
+predRf
+```
+This results are the same as the results given by SVM with Polynomial Kernel, and more or less different from the results given by CART, Naive Bayes, Stochastic Gradient Boosting, and SVM with Linear Kernel.
+
+## Conclusion
+
+In this report we illustrate the process of preprocessing the training data, training the clean dataset using different models with cross validation incorporated, as well as predicting on testing file. We note that both Random Forest and SVM with Polynomial Kernel give very accurate predictions, but the former is much faster than the latter.
